@@ -1,0 +1,94 @@
+services:
+  reranker:
+    image: 10.10.10.111:5001/reranker_custom:latest
+    container_name: reranker
+    ports:
+      - "127.0.0.1:8100:8100"
+    environment:
+      - RERANKER_MODEL=${RERANKER_MODEL:-/models/local/BAAI-bge-reranker-v2-m3}
+      - RERANKER_MODEL_PATH=${RERANKER_MODEL_PATH:-/models/reranker}
+      - RERANKER_MAX_LENGTH=${RERANKER_MAX_LENGTH:-512}
+      - TRANSFORMERS_OFFLINE=1
+      - HF_DATASETS_OFFLINE=1
+    volumes:
+      - reranker-models:/models/reranker
+      - /home/ahad/models/BAAI-bge-reranker-v2-m3:/models/local/BAAI-bge-reranker-v2-m3:ro
+    networks:
+      - reranker-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${RERANKER_MEMORY_LIMIT:-4G}
+        reservations:
+          memory: ${RERANKER_MEMORY_RESERVATION:-2G}
+    labels:
+      - "service=reranker"
+      - "monitoring=true"
+
+  node-exporter:
+    image: 10.10.10.111:5003/prometheus/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - '--path.rootfs=/host'
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /:/host:ro,rslave
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    labels:
+      - "monitoring=true"
+      - "server=reranker"
+
+  promtail:
+    image: 10.10.10.111:5001/grafana/promtail:latest
+    container_name: promtail
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+    command:
+      - '-config.file=/etc/promtail/config.yml'
+    labels:
+      - "monitoring=true"
+      - "server=reranker"
+
+  cadvisor:
+    image: 10.10.10.111:5001/zcube/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    command:
+      - '--docker_only=true'
+      - '--housekeeping_interval=30s'
+    labels:
+      - "monitoring=true"
+      - "server=reranker"
+
+volumes:
+  reranker-models:
+
+networks:
+  reranker-network:
+    driver: bridge
